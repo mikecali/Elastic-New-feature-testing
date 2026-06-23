@@ -44,7 +44,7 @@ This guide explains how to monitor the growth of Elasticsearch indices over time
 
 ---
 
-## Step 1 — Verify Monitoring Data Availability
+## Step 1  Verify Monitoring Data Availability
 
 Before building your dashboard, confirm how much historical data exists. Run this in **Dev Tools on your monitoring cluster**:
 
@@ -61,7 +61,7 @@ The returned `@timestamp` is the oldest data point available. If your retention 
 
 ---
 
-## Step 2 — Identify Your Largest Indices
+## Step 2  Identify Your Largest Indices
 
 Run this in **Dev Tools on your data cluster** (the cluster holding your business data):
 
@@ -82,7 +82,7 @@ Note the index names or patterns you want to track. Common patterns:
 
 ---
 
-## Step 3 — Build the Kibana Lens Dashboard
+## Step 3  Build the Kibana Lens Dashboard
 
 ### 3.1 Open Lens
 
@@ -173,7 +173,7 @@ Adjust the `gte` value to change the comparison window:
 
 ## Understanding Cluster Scope
 
-A common point of confusion — `_cat/indices` and the Lens dashboard are querying **different clusters**. This is expected and correct.
+A common point of confusion  `_cat/indices` and the Lens dashboard are querying **different clusters**. This is expected and correct.
 
 | Query / Tool | Which Cluster |
 |---|---|
