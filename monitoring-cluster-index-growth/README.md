@@ -28,6 +28,9 @@ This guide explains how to monitor the growth of Elasticsearch indices over time
 
 > **Important:** `GET /_cat/indices` only shows the *current* state of your indices. It cannot be used to compare sizes over time. Use the monitoring cluster queries in this guide instead.
 
+**Example Dashboard**
+<img width="1913" height="493" alt="Screenshot 2026-06-23 at 12 27 59 PM" src="https://github.com/user-attachments/assets/54b8271f-01aa-44e0-ae86-9875083728f4" />
+
 ---
 
 ## Prerequisites
