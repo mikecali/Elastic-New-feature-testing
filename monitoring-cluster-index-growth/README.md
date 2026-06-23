@@ -99,7 +99,7 @@ Note the index names or patterns you want to track. Common patterns:
 | Vertical axis | `max(index_stats.total.store.size_in_bytes)` |
 | Value format | **Bytes (1024)** — auto-displays as KB/MB/GB |
 | Breakdown | Top N values of `index_stats.index` |
-| Rank by | `max(index_stats.total.store.size_in_bytes)` — Descending |
+| Rank by | `max(index_stats.total.store.size_in_bytes)`  Descending |
 
 ### 3.3 Apply a KQL Filter
 
@@ -109,7 +109,7 @@ In the **KQL bar at the top of the Lens editor**, enter a filter scoped to the i
 index_stats.index: (your-index-name OR your-other-index-* OR another-index)
 ```
 
-> ⚠️ **Put this filter in the KQL bar at the top of the screen — not in the Breakdown "Include values" field.** The breakdown field does not accept KQL syntax and will return no results.
+> ⚠️ **Put this filter in the KQL bar at the top of the screen  not in the Breakdown "Include values" field.** The breakdown field does not accept KQL syntax and will return no results.
 
 Example to exclude noisy system indices:
 
@@ -128,7 +128,7 @@ index_stats.index: * AND NOT index_stats.index: .apm* AND NOT index_stats.index:
 
 ---
 
-## Step 4 — Query Historical Growth
+## Step 4  Query Historical Growth
 
 To get a programmatic size comparison over a time window, run this aggregation in **Dev Tools on the monitoring cluster**:
 
